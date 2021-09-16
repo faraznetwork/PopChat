@@ -29,7 +29,6 @@ import org.matrix.android.sdk.internal.session.homeserver.GetHomeServerCapabilit
 import org.matrix.android.sdk.internal.session.initsync.DefaultInitialSyncProgressService
 import org.matrix.android.sdk.internal.session.initsync.reportSubtask
 import org.matrix.android.sdk.internal.session.sync.model.LazyRoomSyncEphemeral
-import org.matrix.android.sdk.internal.session.sync.model.SyncResponse
 import org.matrix.android.sdk.internal.session.sync.parsing.InitialSyncResponseParser
 import org.matrix.android.sdk.internal.session.user.UserStore
 import org.matrix.android.sdk.internal.task.Task
@@ -95,7 +94,7 @@ internal class DefaultSyncTask @Inject constructor(
             userStore.createOrUpdate(userId)
             initialSyncProgressService.startRoot(InitSyncStep.ImportingAccount, 100)
         }
-        // Maybe refresh the home server capabilities data we know
+        // Maybe refresh the homeserver capabilities data we know
         getHomeServerCapabilitiesTask.execute(GetHomeServerCapabilitiesTask.Params(forceRefresh = false))
 
         val readTimeOut = (params.timeout + TIMEOUT_MARGIN).coerceAtLeast(TimeOutInterceptor.DEFAULT_LONG_TIMEOUT)
@@ -115,8 +114,8 @@ internal class DefaultSyncTask @Inject constructor(
                     workingDir.deleteRecursively()
                 } else {
                     val syncResponse = logDuration("INIT_SYNC Request") {
-                        executeRequest<SyncResponse>(globalErrorReceiver) {
-                            apiCall = syncAPI.sync(
+                        executeRequest(globalErrorReceiver) {
+                            syncAPI.sync(
                                     params = requestParams,
                                     readTimeOut = readTimeOut
                             )
@@ -130,8 +129,8 @@ internal class DefaultSyncTask @Inject constructor(
             }
             initialSyncProgressService.endAll()
         } else {
-            val syncResponse = executeRequest<SyncResponse>(globalErrorReceiver) {
-                apiCall = syncAPI.sync(
+            val syncResponse = executeRequest(globalErrorReceiver) {
+                syncAPI.sync(
                         params = requestParams,
                         readTimeOut = readTimeOut
                 )

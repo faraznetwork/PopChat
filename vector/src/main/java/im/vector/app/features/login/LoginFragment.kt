@@ -32,7 +32,7 @@ import com.jakewharton.rxbinding3.widget.textChanges
 import im.vector.app.R
 import im.vector.app.core.extensions.exhaustive
 import im.vector.app.core.extensions.hideKeyboard
-import im.vector.app.core.extensions.showPassword
+import im.vector.app.core.extensions.hidePassword
 import im.vector.app.core.extensions.toReducedUrl
 import im.vector.app.databinding.FragmentLoginBinding
 import io.reactivex.Observable
@@ -53,7 +53,6 @@ import javax.inject.Inject
  */
 class LoginFragment @Inject constructor() : AbstractSSOLoginFragment<FragmentLoginBinding>() {
 
-    private var passwordShown = false
     private var isSignupMode = false
 
     // Temporary patch for https://github.com/vector-im/riotX-android/issues/1410,
@@ -69,7 +68,6 @@ class LoginFragment @Inject constructor() : AbstractSSOLoginFragment<FragmentLog
 
         setupSubmitButton()
         setupForgottenPasswordButton()
-        setupPasswordReveal()
 
         views.passwordField.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_DONE) {
@@ -91,16 +89,23 @@ class LoginFragment @Inject constructor() : AbstractSSOLoginFragment<FragmentLog
                 SignMode.SignUp             -> {
                     views.loginField.setAutofillHints(HintConstants.AUTOFILL_HINT_NEW_USERNAME)
                     views.passwordField.setAutofillHints(HintConstants.AUTOFILL_HINT_NEW_PASSWORD)
-                    views.loginSocialLoginButtons.mode = SocialLoginButtonsView.Mode.MODE_SIGN_UP
                 }
                 SignMode.SignIn,
                 SignMode.SignInWithMatrixId -> {
                     views.loginField.setAutofillHints(HintConstants.AUTOFILL_HINT_USERNAME)
                     views.passwordField.setAutofillHints(HintConstants.AUTOFILL_HINT_PASSWORD)
-                    views.loginSocialLoginButtons.mode = SocialLoginButtonsView.Mode.MODE_SIGN_IN
                 }
             }.exhaustive
         }
+    }
+
+    private fun setupSocialLoginButtons(state: LoginViewState) {
+        views.loginSocialLoginButtons.mode = when (state.signMode) {
+            SignMode.Unknown            -> error("developer error")
+            SignMode.SignUp             -> SocialLoginButtonsView.Mode.MODE_SIGN_UP
+            SignMode.SignIn,
+            SignMode.SignInWithMatrixId -> SocialLoginButtonsView.Mode.MODE_SIGN_IN
+        }.exhaustive
     }
 
     private fun submit() {
@@ -169,7 +174,7 @@ class LoginFragment @Inject constructor() : AbstractSSOLoginFragment<FragmentLog
                 ServerType.MatrixOrg -> {
                     views.loginServerIcon.isVisible = true
                     views.loginServerIcon.setImageResource(R.drawable.ic_logo_matrix_org)
-                    views.loginTitle.text = getString(resId, state.homeServerUrl.toReducedUrl())
+                    views.loginTitle.text = getString(resId, state.homeServerUrlFromUser.toReducedUrl())
                     views.loginNotice.text = getString(R.string.login_server_matrix_org_text)
                 }
                 ServerType.EMS       -> {
@@ -180,7 +185,7 @@ class LoginFragment @Inject constructor() : AbstractSSOLoginFragment<FragmentLog
                 }
                 ServerType.Other     -> {
                     views.loginServerIcon.isVisible = false
-                    views.loginTitle.text = getString(resId, state.homeServerUrl.toReducedUrl())
+                    views.loginTitle.text = getString(resId, state.homeServerUrlFromUser.toReducedUrl())
                     views.loginNotice.text = getString(R.string.login_server_other_text)
                 }
                 ServerType.Unknown   -> Unit /* Should not happen */
@@ -240,23 +245,6 @@ class LoginFragment @Inject constructor() : AbstractSSOLoginFragment<FragmentLog
         loginViewModel.handle(LoginAction.PostViewEvent(LoginViewEvents.OnForgetPasswordClicked))
     }
 
-    private fun setupPasswordReveal() {
-        passwordShown = false
-
-        views.passwordReveal.setOnClickListener {
-            passwordShown = !passwordShown
-
-            renderPasswordField()
-        }
-
-        renderPasswordField()
-    }
-
-    private fun renderPasswordField() {
-        views.passwordField.showPassword(passwordShown)
-        views.passwordReveal.render(passwordShown)
-    }
-
     override fun resetViewModel() {
         loginViewModel.handle(LoginAction.ResetLogin)
     }
@@ -277,13 +265,13 @@ class LoginFragment @Inject constructor() : AbstractSSOLoginFragment<FragmentLog
 
         setupUi(state)
         setupAutoFill(state)
+        setupSocialLoginButtons(state)
         setupButtons(state)
 
         when (state.asyncLoginAction) {
             is Loading -> {
                 // Ensure password is hidden
-                passwordShown = false
-                renderPasswordField()
+                views.passwordField.hidePassword()
             }
             is Fail    -> {
                 val error = state.asyncLoginAction.error
@@ -309,8 +297,7 @@ class LoginFragment @Inject constructor() : AbstractSSOLoginFragment<FragmentLog
         when (state.asyncRegistration) {
             is Loading -> {
                 // Ensure password is hidden
-                passwordShown = false
-                renderPasswordField()
+                views.passwordField.hidePassword()
             }
             // Success is handled by the LoginActivity
             is Success -> Unit

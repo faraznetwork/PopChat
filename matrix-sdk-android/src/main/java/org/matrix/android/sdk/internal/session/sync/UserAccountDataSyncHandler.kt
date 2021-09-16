@@ -45,12 +45,15 @@ import org.matrix.android.sdk.internal.database.query.getOrCreate
 import org.matrix.android.sdk.internal.database.query.where
 import org.matrix.android.sdk.internal.di.SessionDatabase
 import org.matrix.android.sdk.internal.di.UserId
+import org.matrix.android.sdk.internal.session.room.RoomAvatarResolver
+import org.matrix.android.sdk.internal.session.room.membership.RoomDisplayNameResolver
 import org.matrix.android.sdk.internal.session.room.membership.RoomMemberHelper
 import org.matrix.android.sdk.internal.session.sync.model.InvitedRoomSync
 import org.matrix.android.sdk.internal.session.sync.model.accountdata.BreadcrumbsContent
 import org.matrix.android.sdk.internal.session.sync.model.accountdata.DirectMessagesContent
 import org.matrix.android.sdk.internal.session.sync.model.accountdata.IgnoredUsersContent
 import org.matrix.android.sdk.internal.session.sync.model.accountdata.UserAccountDataSync
+import org.matrix.android.sdk.internal.session.sync.model.accountdata.toMutable
 import org.matrix.android.sdk.internal.session.user.accountdata.DirectChatsHelper
 import org.matrix.android.sdk.internal.session.user.accountdata.UpdateUserAccountDataTask
 import timber.log.Timber
@@ -60,7 +63,10 @@ internal class UserAccountDataSyncHandler @Inject constructor(
         @SessionDatabase private val monarchy: Monarchy,
         @UserId private val userId: String,
         private val directChatsHelper: DirectChatsHelper,
-        private val updateUserAccountDataTask: UpdateUserAccountDataTask) {
+        private val updateUserAccountDataTask: UpdateUserAccountDataTask,
+        private val roomAvatarResolver: RoomAvatarResolver,
+        private val roomDisplayNameResolver: RoomDisplayNameResolver
+) {
 
     fun handle(realm: Realm, accountData: UserAccountDataSync?) {
         accountData?.list?.forEach { event ->
@@ -78,7 +84,7 @@ internal class UserAccountDataSyncHandler @Inject constructor(
     // If we get some direct chat invites, we synchronize the user account data including those.
     suspend fun synchronizeWithServerIfNeeded(invites: Map<String, InvitedRoomSync>) {
         if (invites.isNullOrEmpty()) return
-        val directChats = directChatsHelper.getLocalUserAccount()
+        val directChats = directChatsHelper.getLocalDirectMessages().toMutable()
         var hasUpdate = false
         monarchy.doWithRealm { realm ->
             invites.forEach { (roomId, _) ->
@@ -151,23 +157,29 @@ internal class UserAccountDataSyncHandler @Inject constructor(
     }
 
     private fun handleDirectChatRooms(realm: Realm, event: UserAccountDataEvent) {
-        val oldDirectRooms = RoomSummaryEntity.getDirectRooms(realm)
-        oldDirectRooms.forEach {
-            it.isDirect = false
-            it.directUserId = null
-        }
         val content = event.content.toModel<DirectMessagesContent>() ?: return
-        content.forEach {
-            val userId = it.key
-            it.value.forEach { roomId ->
+        content.forEach { (userId, roomIds) ->
+            roomIds.forEach { roomId ->
                 val roomSummaryEntity = RoomSummaryEntity.where(realm, roomId).findFirst()
                 if (roomSummaryEntity != null) {
                     roomSummaryEntity.isDirect = true
                     roomSummaryEntity.directUserId = userId
-                    realm.insertOrUpdate(roomSummaryEntity)
+                    // Also update the avatar and displayname, there is a specific treatment for DMs
+                    roomSummaryEntity.avatarUrl = roomAvatarResolver.resolve(realm, roomId)
+                    roomSummaryEntity.displayName = roomDisplayNameResolver.resolve(realm, roomId)
                 }
             }
         }
+
+        // Handle previous direct rooms
+        RoomSummaryEntity.getDirectRooms(realm, excludeRoomIds = content.values.flatten().toSet())
+                .forEach {
+                    it.isDirect = false
+                    it.directUserId = null
+                    // Also update the avatar and displayname, there was a specific treatment for DMs
+                    it.avatarUrl = roomAvatarResolver.resolve(realm, it.roomId)
+                    it.displayName = roomDisplayNameResolver.resolve(realm, it.roomId)
+                }
     }
 
     private fun handleIgnoredUsers(realm: Realm, event: UserAccountDataEvent) {

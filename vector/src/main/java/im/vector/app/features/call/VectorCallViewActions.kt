@@ -29,9 +29,12 @@ sealed class VectorCallViewActions : VectorViewModelAction {
     data class ChangeAudioDevice(val device: CallAudioManager.Device) : VectorCallViewActions()
     object OpenDialPad: VectorCallViewActions()
     data class SendDtmfDigit(val digit: String) : VectorCallViewActions()
+    data class SwitchCall(val callArgs: CallArgs) : VectorCallViewActions()
+
     object SwitchSoundDevice : VectorCallViewActions()
     object HeadSetButtonPressed : VectorCallViewActions()
     object ToggleCamera : VectorCallViewActions()
     object ToggleHDSD : VectorCallViewActions()
     object InitiateCallTransfer : VectorCallViewActions()
+    object TransferCall: VectorCallViewActions()
 }

@@ -27,9 +27,9 @@ import im.vector.app.core.di.ActiveSessionHolder
 import im.vector.app.core.extensions.exhaustive
 import im.vector.app.core.platform.VectorViewModel
 import im.vector.app.features.login.ReAuthHelper
+import im.vector.app.features.session.coroutineScope
 import im.vector.app.features.settings.VectorPreferences
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.matrix.android.sdk.api.auth.UIABaseAuth
@@ -184,7 +184,7 @@ class HomeActivityViewModel @AssistedInject constructor(
 
     private fun maybeBootstrapCrossSigningAfterInitialSync() {
         // We do not use the viewModel context because we do not want to tie this action to activity view model
-        GlobalScope.launch(Dispatchers.IO) {
+        activeSessionHolder.getSafeActiveSession()?.coroutineScope?.launch(Dispatchers.IO) {
             val session = activeSessionHolder.getSafeActiveSession() ?: return@launch
 
             tryOrNull("## MaybeBootstrapCrossSigning: Failed to download keys") {
@@ -203,9 +203,8 @@ class HomeActivityViewModel @AssistedInject constructor(
                     _viewEvents.post(
                             HomeActivityViewEvents.OnNewSession(
                                     session.getUser(session.myUserId)?.toMatrixItem(),
-                                    // If it's an old unverified, we should send requests
-                                    // instead of waiting for an incoming one
-                                    reAuthHelper.data != null
+                                    // Always send request instead of waiting for an incoming as per recent EW changes
+                                    false
                             )
                     )
                 }

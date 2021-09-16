@@ -44,12 +44,17 @@ class PopupAlertManager @Inject constructor() {
 
     companion object {
         const val INCOMING_CALL_PRIORITY = Int.MAX_VALUE
+        const val JITSI_CALL_PRIORITY = INCOMING_CALL_PRIORITY - 1
     }
 
     private var weakCurrentActivity: WeakReference<Activity>? = null
     private var currentAlerter: VectorAlert? = null
 
     private val alertQueue = mutableListOf<VectorAlert>()
+
+    fun hasAlertsToShow() : Boolean {
+        return currentAlerter != null || alertQueue.isNotEmpty()
+    }
 
     fun postVectorAlert(alert: VectorAlert) {
         synchronized(alertQueue) {
@@ -231,7 +236,7 @@ class PopupAlertManager @Inject constructor() {
                         setIcon(it)
                     }
                     alert.actions.forEach { action ->
-                        addButton(action.title, R.style.AlerterButton) {
+                        addButton(action.title, R.style.Widget_Vector_Button_Text_Alerter) {
                             if (action.autoClose) {
                                 currentIsDismissed()
                                 Alerter.hide()

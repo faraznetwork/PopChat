@@ -16,23 +16,23 @@
 
 package im.vector.app.features.call.conference
 
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
 import android.os.Parcelable
 import android.widget.FrameLayout
-import androidx.appcompat.app.AlertDialog
+import android.widget.Toast
 import androidx.core.view.isVisible
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import androidx.lifecycle.Lifecycle
 import com.airbnb.mvrx.Fail
 import com.airbnb.mvrx.MvRx
 import com.airbnb.mvrx.Success
 import com.airbnb.mvrx.viewModel
 import com.facebook.react.modules.core.PermissionListener
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import im.vector.app.R
 import im.vector.app.core.di.ScreenComponent
 import im.vector.app.core.extensions.exhaustive
@@ -40,6 +40,7 @@ import im.vector.app.core.platform.VectorBaseActivity
 import im.vector.app.databinding.ActivityJitsiBinding
 import kotlinx.parcelize.Parcelize
 import org.jitsi.meet.sdk.BroadcastEvent
+import org.jitsi.meet.sdk.JitsiMeet
 import org.jitsi.meet.sdk.JitsiMeetActivityDelegate
 import org.jitsi.meet.sdk.JitsiMeetActivityInterface
 import org.jitsi.meet.sdk.JitsiMeetConferenceOptions
@@ -67,15 +68,7 @@ class VectorJitsiActivity : VectorBaseActivity<ActivityJitsiBinding>(), JitsiMee
     private val jitsiViewModel: JitsiCallViewModel by viewModel()
 
     override fun injectWith(injector: ScreenComponent) {
-        super.injectWith(injector)
         injector.inject(this)
-    }
-
-    // See https://jitsi.github.io/handbook/docs/dev-guide/dev-guide-android-sdk#listening-for-broadcasted-events
-    private val broadcastReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            intent?.let { onBroadcastReceived(it) }
-        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -87,14 +80,54 @@ class VectorJitsiActivity : VectorBaseActivity<ActivityJitsiBinding>(), JitsiMee
 
         jitsiViewModel.observeViewEvents {
             when (it) {
-                is JitsiCallViewEvents.StartConference            -> configureJitsiView(it)
+                is JitsiCallViewEvents.JoinConference             -> configureJitsiView(it)
                 is JitsiCallViewEvents.ConfirmSwitchingConference -> handleConfirmSwitching(it)
+                JitsiCallViewEvents.FailJoiningConference         -> handleFailJoining()
                 JitsiCallViewEvents.Finish                        -> finish()
                 JitsiCallViewEvents.LeaveConference               -> handleLeaveConference()
             }.exhaustive
         }
+        lifecycle.addObserver(JitsiBroadcastEventObserver(this, this::onBroadcastEvent))
+    }
 
-        registerForBroadcastMessages()
+    override fun onResume() {
+        super.onResume()
+        JitsiMeetActivityDelegate.onHostResume(this)
+    }
+
+    override fun initUiAndData() {
+        super.initUiAndData()
+        jitsiMeetView = JitsiMeetView(this)
+        val params = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        views.jitsiLayout.addView(jitsiMeetView, params)
+    }
+
+    override fun onStop() {
+        JitsiMeetActivityDelegate.onHostPause(this)
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        val currentConf = JitsiMeet.getCurrentConference()
+        jitsiMeetView?.leave()
+        jitsiMeetView?.dispose()
+        // Fake emitting CONFERENCE_TERMINATED event when currentConf is not null (probably when closing the PiP screen).
+        if (currentConf != null) {
+            JitsiBroadcastEmitter(this).emitConferenceEnded()
+        }
+        JitsiMeetActivityDelegate.onHostDestroy(this)
+        super.onDestroy()
+    }
+
+    override fun onBackPressed() {
+        JitsiMeetActivityDelegate.onBackPressed()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+            jitsiMeetView?.enterPictureInPicture()
+        }
     }
 
     private fun handleLeaveConference() {
@@ -102,7 +135,7 @@ class VectorJitsiActivity : VectorBaseActivity<ActivityJitsiBinding>(), JitsiMee
     }
 
     private fun handleConfirmSwitching(action: JitsiCallViewEvents.ConfirmSwitchingConference) {
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.dialog_title_warning)
                 .setMessage(R.string.jitsi_leave_conf_to_join_another_one_content)
                 .setPositiveButton(R.string.action_switch) { _, _ ->
@@ -115,14 +148,16 @@ class VectorJitsiActivity : VectorBaseActivity<ActivityJitsiBinding>(), JitsiMee
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean,
                                                newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        checkIfActivityShouldBeFinished()
         Timber.w("onPictureInPictureModeChanged($isInPictureInPictureMode)")
     }
 
-    override fun initUiAndData() {
-        super.initUiAndData()
-        jitsiMeetView = JitsiMeetView(this)
-        val params = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-        views.jitsiLayout.addView(jitsiMeetView, params)
+    private fun checkIfActivityShouldBeFinished() {
+        // OnStop is called when PiP mode is closed directly from the ui
+        // If stopped is called and PiP mode is not active, we should finish the activity and remove the task as Android creates a new one for PiP.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && !isInPictureInPictureMode) {
+            finishAndRemoveTask()
+        }
     }
 
     private fun renderState(viewState: JitsiCallViewState) {
@@ -139,12 +174,18 @@ class VectorJitsiActivity : VectorBaseActivity<ActivityJitsiBinding>(), JitsiMee
         }
     }
 
-    private fun configureJitsiView(startConference: JitsiCallViewEvents.StartConference) {
+    private fun handleFailJoining() {
+        Toast.makeText(this, getString(R.string.error_jitsi_join_conf), Toast.LENGTH_LONG).show()
+        finish()
+    }
+
+    private fun configureJitsiView(joinConference: JitsiCallViewEvents.JoinConference) {
         val jitsiMeetConferenceOptions = JitsiMeetConferenceOptions.Builder()
-                .setVideoMuted(!startConference.enableVideo)
-                .setUserInfo(startConference.userInfo)
+                .setVideoMuted(!joinConference.enableVideo)
+                .setUserInfo(joinConference.userInfo)
+                .setToken(joinConference.token)
                 .apply {
-                    tryOrNull { URL(startConference.jitsiUrl) }?.let {
+                    tryOrNull { URL(joinConference.jitsiUrl) }?.let {
                         setServerURL(it)
                     }
                 }
@@ -154,38 +195,10 @@ class VectorJitsiActivity : VectorBaseActivity<ActivityJitsiBinding>(), JitsiMee
                 .setFeatureFlag("add-people.enabled", false)
                 .setFeatureFlag("video-share.enabled", false)
                 .setFeatureFlag("call-integration.enabled", false)
-                .setRoom(startConference.confId)
-                .setSubject(startConference.subject)
+                .setRoom(joinConference.confId)
+                .setSubject(joinConference.subject)
                 .build()
         jitsiMeetView?.join(jitsiMeetConferenceOptions)
-    }
-
-    override fun onStop() {
-        JitsiMeetActivityDelegate.onHostPause(this)
-        super.onStop()
-    }
-
-    override fun onResume() {
-        JitsiMeetActivityDelegate.onHostResume(this)
-        super.onResume()
-    }
-
-    override fun onBackPressed() {
-        JitsiMeetActivityDelegate.onBackPressed()
-        super.onBackPressed()
-    }
-
-    override fun onDestroy() {
-        JitsiMeetActivityDelegate.onHostDestroy(this)
-        unregisterForBroadcastMessages()
-        super.onDestroy()
-    }
-
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
-            jitsiMeetView?.enterPictureInPicture()
-        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -210,24 +223,7 @@ class VectorJitsiActivity : VectorBaseActivity<ActivityJitsiBinding>(), JitsiMee
         JitsiMeetActivityDelegate.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
-    private fun registerForBroadcastMessages() {
-        val intentFilter = IntentFilter()
-        for (type in BroadcastEvent.Type.values()) {
-            intentFilter.addAction(type.action)
-        }
-        tryOrNull("Unable to register receiver") {
-            LocalBroadcastManager.getInstance(this).registerReceiver(broadcastReceiver, intentFilter)
-        }
-    }
-
-    private fun unregisterForBroadcastMessages() {
-        tryOrNull("Unable to unregister receiver") {
-            LocalBroadcastManager.getInstance(this).unregisterReceiver(broadcastReceiver)
-        }
-    }
-
-    private fun onBroadcastReceived(intent: Intent) {
-        val event = BroadcastEvent(intent)
+    private fun onBroadcastEvent(event: BroadcastEvent) {
         Timber.v("Broadcast received: ${event.type}")
         when (event.type) {
             BroadcastEvent.Type.CONFERENCE_TERMINATED -> onConferenceTerminated(event.data)

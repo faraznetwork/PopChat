@@ -22,8 +22,8 @@ import com.airbnb.mvrx.FragmentViewModelContext
 import com.airbnb.mvrx.MvRxViewModelFactory
 import com.airbnb.mvrx.ViewModelContext
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
 import im.vector.app.R
 import im.vector.app.core.extensions.exhaustive
 import im.vector.app.core.platform.VectorViewModel
@@ -32,7 +32,6 @@ import im.vector.app.features.home.ShortcutCreator
 import im.vector.app.features.powerlevel.PowerLevelsObservableFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import org.matrix.android.sdk.api.MatrixCallback
 import org.matrix.android.sdk.api.query.QueryStringValue
 import org.matrix.android.sdk.api.session.Session
 import org.matrix.android.sdk.api.session.events.model.EventType
@@ -82,8 +81,15 @@ class RoomProfileViewModel @AssistedInject constructor(
         rxRoom.liveStateEvent(EventType.STATE_ROOM_CREATE, QueryStringValue.NoCondition)
                 .mapOptional { it.content.toModel<RoomCreateContent>() }
                 .unwrap()
-                .execute {
-                    copy(roomCreateContent = it)
+                .execute { async ->
+                    copy(
+                            roomCreateContent = async,
+                            // This is a shortcut, we should do the next lines elsewhere, but keep it like that for the moment.
+                            recommendedRoomVersion = room.getRecommendedVersion(),
+                            isUsingUnstableRoomVersion = room.isUsingUnstableRoomVersion(),
+                            canUpgradeRoom = room.userMayUpgradeRoom(session.myUserId),
+                            isTombstoned = room.getStateEvent(EventType.STATE_ROOM_TOMBSTONE) != null
+                    )
                 }
     }
 
@@ -169,15 +175,14 @@ class RoomProfileViewModel @AssistedInject constructor(
 
     private fun handleLeaveRoom() {
         _viewEvents.post(RoomProfileViewEvents.Loading(stringProvider.getString(R.string.room_profile_leaving_room)))
-        room.leave(null, object : MatrixCallback<Unit> {
-            override fun onSuccess(data: Unit) {
+        viewModelScope.launch {
+            try {
+                room.leave(null)
                 // Do nothing, we will be closing the room automatically when it will get back from sync
-            }
-
-            override fun onFailure(failure: Throwable) {
+            } catch (failure: Throwable) {
                 _viewEvents.post(RoomProfileViewEvents.Failure(failure))
             }
-        })
+        }
     }
 
     private fun handleShareRoomProfile() {

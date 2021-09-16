@@ -20,7 +20,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
-import androidx.appcompat.widget.Toolbar
+import com.google.android.material.appbar.MaterialToolbar
 import androidx.core.view.GravityCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import com.airbnb.mvrx.viewModel
@@ -51,6 +51,8 @@ class RoomDetailActivity :
         return ActivityRoomDetailBinding.inflate(layoutInflater)
     }
 
+    override fun getCoordinatorLayout() = views.coordinatorLayout
+
     private lateinit var sharedActionViewModel: RoomDetailSharedActionViewModel
     private val requireActiveMembershipViewModel: RequireActiveMembershipViewModel by viewModel()
 
@@ -69,7 +71,6 @@ class RoomDetailActivity :
     }
 
     override fun injectWith(injector: ScreenComponent) {
-        super.injectWith(injector)
         injector.inject(this)
     }
 
@@ -133,7 +134,7 @@ class RoomDetailActivity :
         super.onDestroy()
     }
 
-    override fun configure(toolbar: Toolbar) {
+    override fun configure(toolbar: MaterialToolbar) {
         configureToolbar(toolbar)
     }
 

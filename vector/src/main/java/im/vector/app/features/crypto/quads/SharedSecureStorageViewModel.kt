@@ -43,7 +43,6 @@ import org.matrix.android.sdk.api.session.securestorage.IntegrityResult
 import org.matrix.android.sdk.api.session.securestorage.KeyInfoResult
 import org.matrix.android.sdk.api.session.securestorage.RawBytesKeySpec
 import org.matrix.android.sdk.internal.crypto.crosssigning.toBase64NoPadding
-import org.matrix.android.sdk.internal.util.awaitCallback
 import org.matrix.android.sdk.rx.rx
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
@@ -51,7 +50,6 @@ import java.io.ByteArrayOutputStream
 data class SharedSecureStorageViewState(
         val ready: Boolean = false,
         val hasPassphrase: Boolean = true,
-        val passphraseVisible: Boolean = false,
         val checkingSSSSAction: Async<Unit> = Uninitialized,
         val step: Step = Step.EnterPassphrase,
         val activeDeviceCount: Int = 0,
@@ -129,7 +127,6 @@ class SharedSecureStorageViewModel @AssistedInject constructor(
 
     override fun handle(action: SharedSecureStorageAction) = withState {
         when (action) {
-            is SharedSecureStorageAction.TogglePasswordVisibility -> handleTogglePasswordVisibility()
             is SharedSecureStorageAction.Cancel                   -> handleCancel()
             is SharedSecureStorageAction.SubmitPassphrase         -> handleSubmitPassphrase(action)
             SharedSecureStorageAction.UseKey                      -> handleUseKey()
@@ -219,14 +216,11 @@ class SharedSecureStorageViewModel @AssistedInject constructor(
 
                 withContext(Dispatchers.IO) {
                     args.requestedSecrets.forEach {
-                        if (session.getAccountDataEvent(it) != null) {
-                            val res = awaitCallback<String> { callback ->
-                                session.sharedSecretStorageService.getSecret(
-                                        name = it,
-                                        keyId = keyInfo.id,
-                                        secretKey = keySpec,
-                                        callback = callback)
-                            }
+                        if (session.accountDataService().getUserAccountDataEvent(it) != null) {
+                            val res = session.sharedSecretStorageService.getSecret(
+                                    name = it,
+                                    keyId = keyInfo.id,
+                                    secretKey = keySpec)
                             decryptedSecretMap[it] = res
                         } else {
                             Timber.w("## Cannot find secret $it in SSSS, skip")
@@ -291,14 +285,11 @@ class SharedSecureStorageViewModel @AssistedInject constructor(
 
                 withContext(Dispatchers.IO) {
                     args.requestedSecrets.forEach {
-                        if (session.getAccountDataEvent(it) != null) {
-                            val res = awaitCallback<String> { callback ->
-                                session.sharedSecretStorageService.getSecret(
-                                        name = it,
-                                        keyId = keyInfo.id,
-                                        secretKey = keySpec,
-                                        callback = callback)
-                            }
+                        if (session.accountDataService().getUserAccountDataEvent(it) != null) {
+                            val res = session.sharedSecretStorageService.getSecret(
+                                    name = it,
+                                    keyId = keyInfo.id,
+                                    secretKey = keySpec)
                             decryptedSecretMap[it] = res
                         } else {
                             Timber.w("## Cannot find secret $it in SSSS, skip")
@@ -324,14 +315,6 @@ class SharedSecureStorageViewModel @AssistedInject constructor(
 
     private fun handleCancel() {
         _viewEvents.post(SharedSecureStorageViewEvent.Dismiss)
-    }
-
-    private fun handleTogglePasswordVisibility() {
-        setState {
-            copy(
-                    passphraseVisible = !passphraseVisible
-            )
-        }
     }
 
     companion object : MvRxViewModelFactory<SharedSecureStorageViewModel, SharedSecureStorageViewState> {

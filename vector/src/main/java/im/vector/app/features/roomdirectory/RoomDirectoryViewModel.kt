@@ -29,25 +29,23 @@ import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import im.vector.app.core.platform.VectorViewModel
 import im.vector.app.features.settings.VectorPreferences
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import org.matrix.android.sdk.api.MatrixCallback
 import org.matrix.android.sdk.api.extensions.orFalse
-import org.matrix.android.sdk.api.failure.Failure
 import org.matrix.android.sdk.api.session.Session
 import org.matrix.android.sdk.api.session.room.model.Membership
 import org.matrix.android.sdk.api.session.room.model.roomdirectory.PublicRoomsFilter
 import org.matrix.android.sdk.api.session.room.model.roomdirectory.PublicRoomsParams
-import org.matrix.android.sdk.api.session.room.model.thirdparty.RoomDirectoryData
 import org.matrix.android.sdk.api.session.room.roomSummaryQueryParams
 import org.matrix.android.sdk.rx.rx
 import timber.log.Timber
-import java.util.Locale
 
 class RoomDirectoryViewModel @AssistedInject constructor(
         @Assisted initialState: PublicRoomsViewState,
         vectorPreferences: VectorPreferences,
-        private val session: Session
+        private val session: Session,
+        private val explicitTermFilter: ExplicitTermFilter
 ) : VectorViewModel<PublicRoomsViewState, RoomDirectoryAction, RoomDirectoryViewEvents>(initialState) {
 
     @AssistedFactory
@@ -57,11 +55,6 @@ class RoomDirectoryViewModel @AssistedInject constructor(
 
     companion object : MvRxViewModelFactory<RoomDirectoryViewModel, PublicRoomsViewState> {
         private const val PUBLIC_ROOMS_LIMIT = 20
-
-        // List of forbidden terms, in lower case
-        private val explicitContentTerms = listOf(
-                "nsfw"
-        )
 
         @JvmStatic
         override fun create(viewModelContext: ViewModelContext, state: PublicRoomsViewState): RoomDirectoryViewModel? {
@@ -93,7 +86,7 @@ class RoomDirectoryViewModel @AssistedInject constructor(
                     val joinedRoomIds = list
                             ?.map { it.roomId }
                             ?.toSet()
-                            ?: emptySet()
+                            .orEmpty()
 
                     setState {
                         copy(joinedRoomsIds = joinedRoomIds)
@@ -166,6 +159,17 @@ class RoomDirectoryViewModel @AssistedInject constructor(
     }
 
     private fun load(filter: String, roomDirectoryData: RoomDirectoryData) {
+        if (!showAllRooms && !explicitTermFilter.canSearchFor(filter)) {
+            setState {
+                copy(
+                        asyncPublicRoomsRequest = Success(Unit),
+                        publicRooms = emptyList(),
+                        hasMore = false
+                )
+            }
+            return
+        }
+
         currentJob = viewModelScope.launch {
             val data = try {
                 session.getPublicRooms(roomDirectoryData.homeServer,
@@ -178,7 +182,7 @@ class RoomDirectoryViewModel @AssistedInject constructor(
                         )
                 )
             } catch (failure: Throwable) {
-                if (failure is Failure.Cancelled) {
+                if (failure is CancellationException) {
                     // Ignore, another request should be already started
                     return@launch
                 }
@@ -202,11 +206,7 @@ class RoomDirectoryViewModel @AssistedInject constructor(
             // Filter
             val newPublicRooms = data.chunk.orEmpty()
                     .filter {
-                        showAllRooms
-                                || "${it.name.orEmpty()} ${it.topic.orEmpty()} ${it.canonicalAlias.orEmpty()}".toLowerCase(Locale.ROOT)
-                                .let { str ->
-                                    explicitContentTerms.all { term -> term !in str }
-                                }
+                        showAllRooms || explicitTermFilter.isValid("${it.name.orEmpty()} ${it.topic.orEmpty()}")
                     }
 
             setState {
@@ -229,20 +229,17 @@ class RoomDirectoryViewModel @AssistedInject constructor(
             Timber.w("Try to join an already joining room. Should not happen")
             return@withState
         }
-        val viaServers = state.roomDirectoryData.homeServer
-                ?.let { listOf(it) }
-                .orEmpty()
-        session.joinRoom(action.roomId, viaServers = viaServers, callback = object : MatrixCallback<Unit> {
-            override fun onSuccess(data: Unit) {
+        val viaServers = listOfNotNull(state.roomDirectoryData.homeServer)
+        viewModelScope.launch {
+            try {
+                session.joinRoom(action.roomId, viaServers = viaServers)
                 // We do not update the joiningRoomsIds here, because, the room is not joined yet regarding the sync data.
                 // Instead, we wait for the room to be joined
-            }
-
-            override fun onFailure(failure: Throwable) {
+            } catch (failure: Throwable) {
                 // Notify the user
                 _viewEvents.post(RoomDirectoryViewEvents.Failure(failure))
             }
-        })
+        }
     }
 
     override fun onCleared() {

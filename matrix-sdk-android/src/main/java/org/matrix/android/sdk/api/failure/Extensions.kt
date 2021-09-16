@@ -29,12 +29,26 @@ fun Throwable.is401() =
 
 fun Throwable.isTokenError() =
         this is Failure.ServerError
-                && (error.code == MatrixError.M_UNKNOWN_TOKEN || error.code == MatrixError.M_MISSING_TOKEN)
+                && (error.code == MatrixError.M_UNKNOWN_TOKEN
+                || error.code == MatrixError.M_MISSING_TOKEN
+                || error.code == MatrixError.ORG_MATRIX_EXPIRED_ACCOUNT)
 
 fun Throwable.shouldBeRetried(): Boolean {
     return this is Failure.NetworkConnection
             || this is IOException
             || (this is Failure.ServerError && error.code == MatrixError.M_LIMIT_EXCEEDED)
+}
+
+/**
+ * Get the retry delay in case of rate limit exceeded error, adding 100 ms, of defaultValue otherwise
+ */
+fun Throwable.getRetryDelay(defaultValue: Long): Long {
+    return (this as? Failure.ServerError)
+            ?.error
+            ?.takeIf { it.code == MatrixError.M_LIMIT_EXCEEDED }
+            ?.retryAfterMillis
+            ?.plus(100L)
+            ?: defaultValue
 }
 
 fun Throwable.isInvalidPassword(): Boolean {
@@ -53,13 +67,16 @@ fun Throwable.isInvalidUIAAuth(): Boolean {
  * Try to convert to a RegistrationFlowResponse. Return null in the cases it's not possible
  */
 fun Throwable.toRegistrationFlowResponse(): RegistrationFlowResponse? {
-    return if (this is Failure.OtherServerError && httpCode == 401) {
+    return if (this is Failure.OtherServerError
+            && httpCode == HttpsURLConnection.HTTP_UNAUTHORIZED /* 401 */) {
         tryOrNull {
             MoshiProvider.providesMoshi()
                     .adapter(RegistrationFlowResponse::class.java)
                     .fromJson(errorBody)
         }
-    } else if (this is Failure.ServerError && httpCode == 401 && error.code == MatrixError.M_FORBIDDEN) {
+    } else if (this is Failure.ServerError
+            && httpCode == HttpsURLConnection.HTTP_UNAUTHORIZED /* 401 */
+            && error.code == MatrixError.M_FORBIDDEN) {
         // This happens when the submission for this stage was bad (like bad password)
         if (error.session != null && error.flows != null) {
             RegistrationFlowResponse(
@@ -74,4 +91,12 @@ fun Throwable.toRegistrationFlowResponse(): RegistrationFlowResponse? {
     } else {
         null
     }
+}
+
+fun Throwable.isRegistrationAvailabilityError(): Boolean {
+    return this is Failure.ServerError
+            && httpCode == HttpsURLConnection.HTTP_BAD_REQUEST /* 400 */
+            && (error.code == MatrixError.M_USER_IN_USE
+            || error.code == MatrixError.M_INVALID_USERNAME
+            || error.code == MatrixError.M_EXCLUSIVE)
 }

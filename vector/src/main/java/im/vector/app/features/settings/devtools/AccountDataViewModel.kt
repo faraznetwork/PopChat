@@ -32,7 +32,6 @@ import im.vector.app.core.platform.VectorViewModel
 import kotlinx.coroutines.launch
 import org.matrix.android.sdk.api.session.Session
 import org.matrix.android.sdk.api.session.accountdata.UserAccountDataEvent
-import org.matrix.android.sdk.internal.util.awaitCallback
 import org.matrix.android.sdk.rx.rx
 
 data class AccountDataViewState(
@@ -44,7 +43,7 @@ class AccountDataViewModel @AssistedInject constructor(@Assisted initialState: A
     : VectorViewModel<AccountDataViewState, AccountDataAction, EmptyViewEvents>(initialState) {
 
     init {
-        session.rx().liveAccountData(emptySet())
+        session.rx().liveUserAccountData(emptySet())
                 .execute {
                     copy(accountData = it)
                 }
@@ -58,9 +57,7 @@ class AccountDataViewModel @AssistedInject constructor(@Assisted initialState: A
 
     private fun handleDeleteAccountData(action: AccountDataAction.DeleteAccountData) {
         viewModelScope.launch {
-            awaitCallback {
-                session.updateAccountData(action.type, emptyMap(), it)
-            }
+            session.accountDataService().updateUserAccountData(action.type, emptyMap())
         }
     }
 
